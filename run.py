@@ -149,6 +149,11 @@ if __name__ == '__main__':
     # TimeXer
     parser.add_argument('--patch_len', type=int, default=16, help='patch length')
 
+    # DWT
+    parser.add_argument('--wavelet', type=str, default='db4', help='DWT wavelet type')
+    parser.add_argument('--dwt_level', type=int, default=1, help='DWT decomposition level')
+    parser.add_argument('--arima_order', type=int, nargs=3, default=[1, 0, 1], help='ARIMA  (p, d, q)')
+
     args = parser.parse_args()
     if torch.cuda.is_available() and args.use_gpu:
         args.device = torch.device('cuda:{}'.format(args.gpu))

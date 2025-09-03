@@ -78,6 +78,17 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         vali_data, vali_loader = self._get_data(flag='val')
         test_data, test_loader = self._get_data(flag='test')
 
+        if self.args.model == 'DWT_ARIMA_TSMixer':
+            print("Preparing ARIMA stage...")
+            all_train_data = []
+            for i, (batch_x, _, _, _) in enumerate(train_loader):
+                all_train_data.append(batch_x)
+                if i >= 100:  
+                    break
+            all_train_data = torch.cat(all_train_data, dim=0)
+            self.model.fit_arima_stage(all_train_data)
+            print("ARIMA fitting complete!")
+
         path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(path):
             os.makedirs(path)

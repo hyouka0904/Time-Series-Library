@@ -1,0 +1,3 @@
+short_term_forecast_M4_test_m4_Monthly
+smape:8.8067, owa:1.0000
+

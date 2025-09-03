@@ -5,12 +5,22 @@ from sklearn.preprocessing import StandardScaler
 import warnings
 warnings.filterwarnings('ignore')
 
+# Import M4 related classes from data_provider
+import sys
+sys.path.append('..')  # Add parent directory to path
+try:
+    from data_provider.m4 import M4Dataset, M4Meta
+except ImportError:
+    print("Warning: Could not import M4 classes. M4 dataset support may be limited.")
+    M4Dataset = None
+    M4Meta = None
+
 
 class ARIMADataLoader:
     """Data loader for ARIMA experiments"""
     
     def __init__(self, data_name, root_path, data_path=None, 
-                 features='S', target='OT', scale=True):
+                 features='S', target='OT', scale=True, seasonal_patterns='Monthly'):
         """
         Args:
             data_name: dataset name (ETTh1, ETTm1, custom, etc.)
@@ -19,6 +29,7 @@ class ARIMADataLoader:
             features: M/S/MS (multivariate/univariate)
             target: target column for S/MS tasks
             scale: whether to scale the data
+            seasonal_patterns: for M4 dataset (Yearly, Quarterly, Monthly, Weekly, Daily, Hourly)
         """
         self.data_name = data_name
         self.root_path = root_path
@@ -27,6 +38,7 @@ class ARIMADataLoader:
         self.target = target
         self.scale = scale
         self.scaler = StandardScaler()
+        self.seasonal_patterns = seasonal_patterns
         
     def load_ETT_data(self, flag='train'):
         """Load ETT dataset"""
@@ -241,6 +253,48 @@ class ARIMADataLoader:
             return val_data, None
         else:
             return test_data, labels
+        
+    def load_m4_data(self, flag='train'):
+        """Load M4 dataset using the existing M4Dataset class"""
+        if M4Dataset is None:
+            raise ImportError("M4Dataset not available. Please check data_provider installation.")
+        
+        # Load M4 dataset
+        if flag == 'train':
+            dataset = M4Dataset.load(training=True, dataset_file=self.root_path)
+        else:
+            dataset = M4Dataset.load(training=False, dataset_file=self.root_path)
+        
+        # Filter by seasonal pattern
+        mask = dataset.groups == self.seasonal_patterns
+        filtered_ids = dataset.ids[mask]
+        filtered_values = dataset.values[mask]
+        
+        # Remove NaN values and prepare data
+        training_values = []
+        for v in filtered_values:
+            cleaned = v[~np.isnan(v)]
+            if len(cleaned) > 0:
+                training_values.append(cleaned)
+        
+        # For ARIMA, we'll return the time series data
+        # Note: M4 is univariate, so each series is separate
+        if flag == 'train':
+            # Return all training series
+            return training_values, filtered_ids
+        else:
+            # For test, we also return the training data for context
+            train_dataset = M4Dataset.load(training=True, dataset_file=self.root_path)
+            train_mask = train_dataset.groups == self.seasonal_patterns
+            train_values = train_dataset.values[train_mask]
+            
+            train_cleaned = []
+            for v in train_values:
+                cleaned = v[~np.isnan(v)]
+                if len(cleaned) > 0:
+                    train_cleaned.append(cleaned)
+            
+            return (train_cleaned, training_values), filtered_ids
     
     def get_data(self, flag='train'):
         """Main method to get data based on dataset type"""
@@ -250,6 +304,8 @@ class ARIMADataLoader:
             return self.load_custom_data(flag)
         elif self.data_name in ['PSM', 'MSL', 'SMAP', 'SMD', 'SWAT']:
             return self.load_anomaly_data(flag)
+        elif self.data_name == 'm4':
+            return self.load_m4_data(flag)
         else:
             # Try custom data loader
             return self.load_custom_data(flag)

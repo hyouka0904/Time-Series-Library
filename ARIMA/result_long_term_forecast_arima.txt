@@ -1,0 +1,18 @@
+long_term_forecast_quick_test_ARIMA_ETTh1_ftS_sl24_pl24_test_0
+mse:0.1217, mae:0.2453
+
+long_term_forecast_exchange_96_96_ARIMA_custom_ftM_sl96_pl96_Exp_0
+mse:0.0068, mae:0.0566
+
+long_term_forecast_exchange_96_192_ARIMA_custom_ftM_sl96_pl192_Exp_0
+mse:0.0105, mae:0.0741
+
+long_term_forecast_exchange_96_336_ARIMA_custom_ftM_sl96_pl336_Exp_0
+mse:0.0128, mae:0.0846
+
+long_term_forecast_exchange_96_720_ARIMA_custom_ftM_sl96_pl720_Exp_0
+mse:0.0149, mae:0.0951
+
+long_term_forecast_weather_96_96_ARIMA_custom_ftM_sl96_pl96_Exp_0
+mse:7412.9895, mae:25.6564
+

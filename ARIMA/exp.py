@@ -9,6 +9,43 @@ from utils import calculate_metrics, adjustment, visual
 import warnings
 warnings.filterwarnings('ignore')
 
+# Import M4Meta from data_provider
+import sys
+sys.path.append('..')  # Add parent directory to path
+try:
+    from data_provider.m4 import M4Meta
+except ImportError:
+    print("Warning: Could not import M4Meta. Using local definition.")
+    # Fallback definition if import fails
+    class M4Meta:
+        seasonal_patterns = ['Yearly', 'Quarterly', 'Monthly', 'Weekly', 'Daily', 'Hourly']
+        horizons = [6, 8, 18, 13, 14, 48]
+        frequencies = [1, 4, 12, 1, 1, 24]
+        horizons_map = {
+            'Yearly': 6,
+            'Quarterly': 8,
+            'Monthly': 18,
+            'Weekly': 13,
+            'Daily': 14,
+            'Hourly': 48
+        }
+        frequency_map = {
+            'Yearly': 1,
+            'Quarterly': 4,
+            'Monthly': 12,
+            'Weekly': 1,
+            'Daily': 1,
+            'Hourly': 24
+        }
+        history_size = {
+            'Yearly': 1.5,
+            'Quarterly': 1.5,
+            'Monthly': 1.5,
+            'Weekly': 10,
+            'Daily': 10,
+            'Hourly': 10
+        }
+
 
 class ARIMAExperimentBase:
     """Base class for ARIMA experiments"""
@@ -18,10 +55,11 @@ class ARIMAExperimentBase:
         self.data_loader = ARIMADataLoader(
             data_name=args.data,
             root_path=args.root_path,
-            data_path=args.data_path,
-            features=args.features,
-            target=args.target,
-            scale=True
+            data_path=args.data_path if hasattr(args, 'data_path') else None,
+            features=args.features if hasattr(args, 'features') else 'S',
+            target=args.target if hasattr(args, 'target') else 'OT',
+            scale=True,
+            seasonal_patterns=args.seasonal_patterns if hasattr(args, 'seasonal_patterns') else 'Monthly'
         )
         
     def _create_result_dir(self, setting):
@@ -168,6 +206,259 @@ class ARIMALongTermForecast(ARIMAExperimentBase):
             f.write(f'mse:{mse:.4f}, mae:{mae:.4f}\n\n')
         
         return mse, mae, rmse
+
+
+class ARIMAShortTermForecast(ARIMAExperimentBase):
+    """ARIMA experiment for short-term forecasting (M4 dataset)"""
+    
+    def __init__(self, args):
+        super().__init__(args)
+        # Set M4 specific parameters
+        if args.data == 'm4':
+            self.args.pred_len = M4Meta.horizons_map[args.seasonal_patterns]
+            self.args.seq_len = 2 * self.args.pred_len
+            self.args.label_len = self.args.pred_len
+            self.args.frequency_map = M4Meta.frequency_map[args.seasonal_patterns]
+            # Update data loader with seasonal pattern
+            self.data_loader.seasonal_patterns = args.seasonal_patterns
+    
+    def train_and_test(self, setting):
+        """Train and test ARIMA model for short-term forecasting"""
+        print(f"Running ARIMA short-term forecast experiment: {setting}")
+        
+        # For M4 dataset, we need special handling
+        if self.args.data == 'm4':
+            return self._m4_experiment(setting)
+        else:
+            # For other datasets, use similar approach as long-term
+            return self._general_short_term(setting)
+    
+    def _m4_experiment(self, setting):
+        """Handle M4 dataset specifically"""
+        print(f"M4 experiment for {self.args.seasonal_patterns}")
+        
+        # Load M4 data
+        train_data, train_ids = self.data_loader.get_data('train')
+        test_info, test_ids = self.data_loader.get_data('test')
+        
+        if isinstance(test_info, tuple):
+            train_context, test_data = test_info
+        else:
+            test_data = test_info
+            train_context = train_data
+        
+        # Prepare for storing predictions
+        all_predictions = []
+        all_actuals = []
+        
+        # Process each time series
+        num_series = len(train_data)
+        print(f"Processing {num_series} time series...")
+        
+        for i in range(min(num_series, 1000)):  # Limit to 1000 series for speed
+            if i % 100 == 0:
+                print(f"Processing series {i}/{num_series}")
+            
+            # Get training data for this series
+            ts_train = train_data[i]
+            
+            # Fit ARIMA model
+            model = ARIMAModel(auto_select=True)
+            try:
+                model.fit(ts_train, normalize=False)
+                
+                # Make predictions
+                predictions = model.predict(self.args.pred_len)
+                
+                # Get actual values if available
+                if i < len(test_data):
+                    actuals = test_data[i][:self.args.pred_len]
+                    all_predictions.append(predictions[:len(actuals)])
+                    all_actuals.append(actuals)
+                else:
+                    all_predictions.append(predictions)
+            except Exception as e:
+                print(f"Error processing series {i}: {e}")
+                # Use naive forecast as fallback
+                naive_pred = np.repeat(ts_train[-1], self.args.pred_len)
+                all_predictions.append(naive_pred)
+                if i < len(test_data):
+                    actuals = test_data[i][:self.args.pred_len]
+                    all_actuals.append(actuals)
+        
+        # Calculate metrics
+        if all_actuals:
+            # Calculate SMAPE
+            def smape(y_true, y_pred):
+                denominator = (np.abs(y_true) + np.abs(y_pred)) / 2.0
+                diff = np.abs(y_true - y_pred) / denominator
+                diff[denominator == 0] = 0.0
+                return 100 * np.mean(diff)
+            
+            # Calculate metrics for each series
+            smapes = []
+            for pred, actual in zip(all_predictions, all_actuals):
+                if len(pred) == len(actual):
+                    smapes.append(smape(actual, pred))
+            
+            avg_smape = np.mean(smapes)
+            
+            # OWA is relative to baseline, set to 1.0 for ARIMA
+            owa = 1.0
+            
+            print(f"Average SMAPE: {avg_smape:.4f}")
+        else:
+            # No test data available
+            avg_smape = 0.0
+            owa = 0.0
+            print("No test data available for evaluation")
+        
+        # Save results
+        folder_path = self._create_result_dir(setting)
+        
+        # Save predictions in M4 format
+        if all_predictions:
+            pred_df = pd.DataFrame(all_predictions[:len(test_ids)])
+            pred_df.index = test_ids[:len(all_predictions)]
+            pred_df.to_csv(os.path.join(folder_path, f'{self.args.seasonal_patterns}_forecast.csv'))
+        
+        with open(os.path.join(folder_path, 'metrics.txt'), 'w') as f:
+            f.write(f"SMAPE: {avg_smape:.4f}\n")
+            f.write(f"OWA: {owa:.4f}\n")
+        
+        with open('result_short_term_forecast_arima.txt', 'a') as f:
+            f.write(f"{setting}\n")
+            f.write(f'smape:{avg_smape:.4f}, owa:{owa:.4f}\n\n')
+        
+        return avg_smape, owa
+    
+    def _general_short_term(self, setting):
+        """General short-term forecasting for non-M4 datasets"""
+        print(f"Running general short-term forecast for {self.args.data}")
+        
+        # Load data
+        train_data, _ = self.data_loader.get_data('train')
+        val_data, _ = self.data_loader.get_data('val')
+        test_data, _ = self.data_loader.get_data('test')
+        
+        # For MS task, predict only target
+        if self.args.features == 'MS':
+            target_idx = list(self.data_loader.df_raw.columns).index(self.args.target) - 1
+            train_target = train_data[:, target_idx]
+            n_features = 1
+        else:
+            train_target = train_data
+            n_features = train_data.shape[1] if len(train_data.shape) > 1 else 1
+        
+        # Initialize model
+        if n_features == 1:
+            model = ARIMAModel(auto_select=True)
+            model.fit(train_target.flatten(), normalize=False)
+        else:
+            model = MultivarateARIMAWrapper(n_features, auto_select=True)
+            model.fit(train_target, normalize=False)
+        
+        # Short-term predictions with more frequent model updates
+        preds = []
+        trues = []
+        
+        seq_len = self.args.seq_len
+        pred_len = self.args.pred_len
+        
+        # Sliding window prediction
+        test_steps = min(1000, len(test_data) - seq_len - pred_len + 1)  # Limit for short-term
+        
+        for i in range(0, test_steps, pred_len):
+            # Use recent history
+            if i == 0:
+                history = train_target[-seq_len:]
+            else:
+                start_idx = max(0, i - seq_len)
+                end_idx = i
+                history = test_data[start_idx:end_idx]
+                if self.args.features == 'MS':
+                    history = history[:, target_idx]
+            
+            # Refit model more frequently for short-term
+            if i % pred_len == 0:  # Refit every prediction
+                if n_features == 1:
+                    recent_train = np.concatenate([train_target[-500:], history.flatten()])
+                    model.fit(recent_train, normalize=False)
+                else:
+                    recent_train = np.concatenate([train_target[-500:], history], axis=0)
+                    model.fit(recent_train, normalize=False)
+            
+            # Predict
+            pred = model.predict(pred_len)
+            
+            # Get true values
+            true = test_data[i:i+pred_len]
+            if self.args.features == 'MS':
+                true = true[:, target_idx:target_idx+1]
+                pred = pred.reshape(-1, 1)
+            elif n_features == 1:
+                true = true.reshape(-1, 1)
+                pred = pred.reshape(-1, 1)
+            
+            preds.append(pred)
+            trues.append(true)
+        
+        # Concatenate predictions
+        preds = np.array(preds)
+        trues = np.array(trues)
+        
+        # Calculate metrics
+        if self.data_loader.scale and self.args.inverse:
+            # Inverse transform
+            preds = self._inverse_transform(preds, target_idx if self.args.features == 'MS' else None)
+            trues = self._inverse_transform(trues, target_idx if self.args.features == 'MS' else None)
+        
+        # Calculate metrics
+        mse = mean_squared_error(trues.reshape(-1), preds.reshape(-1))
+        mae = mean_absolute_error(trues.reshape(-1), preds.reshape(-1))
+        rmse = np.sqrt(mse)
+        
+        # Calculate SMAPE for short-term forecast
+        def smape(y_true, y_pred):
+            return 100 * np.mean(2 * np.abs(y_pred - y_true) / (np.abs(y_true) + np.abs(y_pred) + 1e-8))
+        
+        smape_value = smape(trues.reshape(-1), preds.reshape(-1))
+        
+        print(f'MSE: {mse:.4f}, MAE: {mae:.4f}, RMSE: {rmse:.4f}, SMAPE: {smape_value:.4f}')
+        
+        # Save results
+        folder_path = self._create_result_dir(setting)
+        
+        with open(os.path.join(folder_path, 'metrics.txt'), 'w') as f:
+            f.write(f'MSE: {mse:.4f}\n')
+            f.write(f'MAE: {mae:.4f}\n')
+            f.write(f'RMSE: {rmse:.4f}\n')
+            f.write(f'SMAPE: {smape_value:.4f}\n')
+        
+        np.save(os.path.join(folder_path, 'pred.npy'), preds)
+        np.save(os.path.join(folder_path, 'true.npy'), trues)
+        
+        with open('result_short_term_forecast_arima.txt', 'a') as f:
+            f.write(f"{setting}\n")
+            f.write(f'mse:{mse:.4f}, mae:{mae:.4f}, smape:{smape_value:.4f}\n\n')
+        
+        return mse, mae, rmse
+    
+    def _inverse_transform(self, data, target_idx=None):
+        """Helper method for inverse transform"""
+        shape = data.shape
+        data = data.reshape(-1, data.shape[-1])
+        
+        if target_idx is not None:
+            # For MS task
+            dummy_data = np.zeros((data.shape[0], self.data_loader.scaler.n_features_in_))
+            dummy_data[:, target_idx] = data.flatten()
+            dummy_data = self.data_loader.inverse_transform(dummy_data)
+            data = dummy_data[:, target_idx:target_idx+1]
+        else:
+            data = self.data_loader.inverse_transform(data)
+        
+        return data.reshape(shape)
 
 
 class ARIMAAnomalyDetection(ARIMAExperimentBase):

@@ -5,7 +5,8 @@ import random
 from exp import (
     ARIMALongTermForecast, 
     ARIMAAnomalyDetection,
-    ARIMAImputation
+    ARIMAImputation,
+    ARIMAShortTermForecast
 )
 
 
@@ -31,7 +32,7 @@ def main():
     # Basic config
     parser.add_argument('--task_name', type=str, required=True, 
                         default='long_term_forecast',
-                        help='task name: long_term_forecast, anomaly_detection, imputation')
+                        help='task name: long_term_forecast, short_term_forecast, anomaly_detection, imputation')
     parser.add_argument('--model_id', type=str, required=True, 
                         default='test', help='model id')
     
@@ -39,9 +40,9 @@ def main():
     parser.add_argument('--data', type=str, required=True, 
                         default='ETTh1', help='dataset type')
     parser.add_argument('--root_path', type=str, 
-                        default='./data/ETT/', help='root path of data file')
+                        default='../dataset/ETT/', help='root path of data file')
     parser.add_argument('--data_path', type=str, 
-                        default='ETTh1.csv', help='data file')
+                        default=None, help='data file (optional for some datasets)')
     parser.add_argument('--features', type=str, default='M',
                         help='forecasting task: M, S, MS')
     parser.add_argument('--target', type=str, default='OT', 
@@ -54,6 +55,8 @@ def main():
                         help='start token length (not used in ARIMA)')
     parser.add_argument('--pred_len', type=int, default=96, 
                         help='prediction sequence length')
+    parser.add_argument('--seasonal_patterns', type=str, default='Monthly',
+                        help='seasonal pattern for M4 dataset')
     parser.add_argument('--inverse', action='store_true', 
                         help='inverse output data', default=False)
     
@@ -92,6 +95,8 @@ def main():
     # Select experiment based on task
     if args.task_name == 'long_term_forecast':
         Exp = ARIMALongTermForecast
+    elif args.task_name == 'short_term_forecast':
+        Exp = ARIMAShortTermForecast
     elif args.task_name == 'anomaly_detection':
         Exp = ARIMAAnomalyDetection
     elif args.task_name == 'imputation':
@@ -114,6 +119,11 @@ def main():
         # Train and test
         if args.task_name == 'long_term_forecast':
             mse, mae, rmse = exp.train_and_test(setting)
+        elif args.task_name == 'short_term_forecast':
+            if args.data == 'm4':
+                smape, owa = exp.train_and_test(setting)
+            else:
+                mse, mae, rmse = exp.train_and_test(setting)
         elif args.task_name == 'anomaly_detection':
             accuracy, precision, recall, f_score = exp.train_and_test(setting)
         elif args.task_name == 'imputation':
