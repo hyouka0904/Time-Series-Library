@@ -149,6 +149,7 @@ dmypy.json
 /ARIMA/arima_results/
 /dataset/
 /data/
+/arima_cache/
 data_factory_all.py
 data_loader_all.py
 /scripts/short_term_forecast/tv_script/
